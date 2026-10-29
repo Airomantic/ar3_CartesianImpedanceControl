@@ -1,0 +1,2 @@
+src/xCoreSDK-0.7.1.ar_10/librokae-v0.7.1.ar_10/lib/Windows/Debug/64bit/*.lib filter=lfs diff=lfs merge=lfs -text
+src/xCoreSDK-0.7.1.ar_10/librokae-v0.7.1.ar_10/lib/Windows/Debug/64bit/*.pdb filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,6 @@
+float64 mass
+float64[3] cog
+float64[3] inertia
+---
+bool success
+string message

@@ -1,0 +1,221 @@
+Panels:
+  - Class: rviz/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Status1
+        - /Grid1
+        - /RobotModel1
+        - /RobotModel1/Links1
+        - /TF1
+        - /TF1/Frames1
+        - /TF1/Tree1
+        - /Effort1
+      Splitter Ratio: 0.493631005
+    Tree Height: 800
+  - Class: rviz/Selection
+    Name: Selection
+  - Class: rviz/Tool Properties
+    Expanded:
+      - /2D Pose Estimate1
+      - /2D Nav Goal1
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.588679016
+  - Class: rviz/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz/Time
+    Experimental: false
+    Name: Time
+    SyncMode: 0
+    SyncSource: ""
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.0299999993
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Alpha: 1
+      Class: rviz/RobotModel
+      Collision Enabled: false
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: true
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        world:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        xm7p_base:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link5:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link6:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        xm7p_link7:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Name: RobotModel
+      Robot Description: robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Class: rviz/TF
+      Enabled: false
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {}
+      Update Interval: 0
+      Value: false
+    - Alpha: 1
+      Class: rviz/Effort
+      Enabled: true
+      History Length: 1
+      Joints:
+        xm7p_joint_1:
+          Value: true
+        xm7p_joint_2:
+          Value: true
+        xm7p_joint_3:
+          Value: true
+        xm7p_joint_4:
+          Value: true
+        xm7p_joint_5:
+          Value: true
+        xm7p_joint_6:
+          Value: true
+        xm7p_joint_7:
+          Value: true
+      Name: Effort
+      Robot Description: robot_description
+      Scale: 1
+      Topic: /xm7p/joint_states
+      Unreliable: false
+      Value: true
+      Width: 0.0199999996
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+    - Class: rviz/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz/SetGoal
+      Topic: /move_base_simple/goal
+    - Class: rviz/PublishPoint
+      Single click: true
+      Topic: /clicked_point
+  Value: true
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 4.70890236
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.0599999987
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0.32497701
+        Y: 0.403091013
+        Z: 0.294402003
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.0500000007
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.00999999978
+      Pitch: 0.114800498
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 5.25860977
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1003
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Selection:
+    collapsed: false
+  Time:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1855
+  X: 65
+  Y: 24
