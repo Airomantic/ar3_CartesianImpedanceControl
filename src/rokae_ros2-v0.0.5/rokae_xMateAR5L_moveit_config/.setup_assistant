@@ -1,0 +1,23 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: rokae_description
+    relative_path: urdf/AR5-5_07L-W4C4A2.urdf.xacro
+  srdf:
+    relative_path: config/AR5-5_07L-W4C4A2.srdf
+  package_settings:
+    generated_timestamp: 1764729616
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

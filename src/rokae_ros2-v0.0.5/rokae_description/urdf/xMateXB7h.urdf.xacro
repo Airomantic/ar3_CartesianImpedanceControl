@@ -1,0 +1,239 @@
+<?xml version="1.0"?>
+<!-- xMateXB7h industrial standard 6-axis manipulator -->
+<!-- Kinematics from 仓二 XB7h-R707-04 *_mech.cfg + isg/XB7h-R707/param.json -->
+<!-- Attention: simplified link inertias for visualization / MoveIt -->
+
+<robot name="xMateXB7h" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="robot_ip" default="192.168.21.10"/>
+  <xacro:arg name="local_ip" default="192.168.21.131"/>
+
+  <xacro:include filename="$(find rokae_description)/urdf/materials.xacro"/>
+  <xacro:property name="nameofManipulator" value="xMateXB7h"/>
+
+  <!-- Joint limits: JOINT_RANGE_*_CUSTOMIZE from XB7h-R707-04_mech.cfg (deg -> rad) -->
+  <xacro:property name="j1_lo" value="-2.9670597283903604"/>
+  <xacro:property name="j1_hi" value="2.9670597283903604"/>
+  <xacro:property name="j2_lo" value="-1.6755160819145565"/>
+  <xacro:property name="j2_hi" value="2.3561944901923448"/>
+  <xacro:property name="j3_lo" value="-3.4033920413889427"/>
+  <xacro:property name="j3_hi" value="1.1344640137963142"/>
+  <xacro:property name="j4_lo" value="-2.9670597283903604"/>
+  <xacro:property name="j4_hi" value="2.9670597283903604"/>
+  <xacro:property name="j5_lo" value="-2.0943951023931953"/>
+  <xacro:property name="j5_hi" value="2.0943951023931953"/>
+  <xacro:property name="j6_lo" value="-6.2831853071795862"/>
+  <xacro:property name="j6_hi" value="6.2831853071795862"/>
+
+  <!-- JOINT_MAX_SPEED from XB7h-R707-04_mech.cfg MOTION (deg/s -> rad/s) -->
+  <xacro:property name="j1_vel" value="7.67944870877505"/>
+  <xacro:property name="j2_vel" value="6.19591884457987"/>
+  <xacro:property name="j3_vel" value="7.67944870877505"/>
+  <xacro:property name="j4_vel" value="8.3775804095727811"/>
+  <xacro:property name="j5_vel" value="7.8539816339744828"/>
+  <xacro:property name="j6_vel" value="15.7079632679489656"/>
+
+  <link name="world"/>
+  <joint name="fixed" type="fixed">
+    <parent link="world"/>
+    <child link="${nameofManipulator}_base"/>
+  </joint>
+
+  <link name="${nameofManipulator}_base">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="grey"/>
+    </visual>
+    <inertial>
+      <mass value="8.400"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.05"/>
+      <origin rpy="0 0 0" xyz="0 0 0.19"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_base.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint1" type="revolute">
+    <parent link="${nameofManipulator}_base"/>
+    <child link="${nameofManipulator}_link1"/>
+    <limit effort="8.36" lower="${j1_lo}" upper="${j1_hi}" velocity="${j1_vel}"/>
+    <axis xyz="0 0 1"/>
+    <!-- XB7h param.json: joint1 at base origin (unlike XB7s where d=380 is on joint1) -->
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link1">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="8.400"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.05"/>
+      <origin rpy="0 0 0" xyz="0 0 0.17"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link1.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint2" type="revolute">
+    <parent link="${nameofManipulator}_link1"/>
+    <child link="${nameofManipulator}_link2"/>
+    <limit effort="8.36" lower="${j2_lo}" upper="${j2_hi}" velocity="${j2_vel}"/>
+    <axis xyz="0 1 0"/>
+    <!-- XB7h param.json: joint2 position [30, 0, 380] mm -->
+    <origin rpy="0 0 0" xyz="0.03 0 0.38"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link2">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="14.000"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.05" iyz="0" izz="0.05"/>
+      <origin rpy="0 0 0" xyz="0 0 0.17"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link2.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint3" type="revolute">
+    <parent link="${nameofManipulator}_link2"/>
+    <child link="${nameofManipulator}_link3"/>
+    <limit effort="4.46" lower="${j3_lo}" upper="${j3_hi}" velocity="${j3_vel}"/>
+    <axis xyz="0 1 0"/>
+    <origin rpy="0 0 0" xyz="0 0 0.34"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link3">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link3.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="5.800"/>
+      <inertia ixx="0.03" ixy="0" ixz="0" iyy="0.03" iyz="0" izz="0.03"/>
+      <origin rpy="0 0 0" xyz="0.16 0 0.02"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link3.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint4" type="revolute">
+    <parent link="${nameofManipulator}_link3"/>
+    <child link="${nameofManipulator}_link4"/>
+    <limit effort="2.24" lower="${j4_lo}" upper="${j4_hi}" velocity="${j4_vel}"/>
+    <axis xyz="1 0 0"/>
+    <origin rpy="0 0 0" xyz="0.335 0 0.035"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link4">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link4.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="4.108"/>
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+      <origin rpy="0 0 0" xyz="-0.12 0 0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link4.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint5" type="revolute">
+    <parent link="${nameofManipulator}_link4"/>
+    <child link="${nameofManipulator}_link5"/>
+    <limit effort="1.11" lower="${j5_lo}" upper="${j5_hi}" velocity="${j5_vel}"/>
+    <axis xyz="0 1 0"/>
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link5">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link5.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="1.818"/>
+      <inertia ixx="0.005" ixy="0" ixz="0" iyy="0.005" iyz="0" izz="0.005"/>
+      <origin rpy="0 0 0" xyz="0.02 0 0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link5.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+  <joint name="joint6" type="revolute">
+    <parent link="${nameofManipulator}_link5"/>
+    <child link="${nameofManipulator}_link6"/>
+    <limit effort="1.11" lower="${j6_lo}" upper="${j6_hi}" velocity="${j6_vel}"/>
+    <axis xyz="1 0 0"/>
+    <origin rpy="0 0 0" xyz="0.078 0 0"/>
+  </joint>
+
+  <link name="${nameofManipulator}_link6">
+    <visual>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/visual/${nameofManipulator}_link6.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white"/>
+    </visual>
+    <inertial>
+      <mass value="0.390"/>
+      <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+      <origin rpy="0 0 0" xyz="-0.009 0 0"/>
+    </inertial>
+    <collision>
+      <geometry>
+        <mesh filename="package://rokae_description/meshes/${nameofManipulator}/collision/${nameofManipulator}_link6.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>
+  </link>
+
+</robot>

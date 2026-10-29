@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--This does not replace URDF, and is not an extension of URDF.
+    This is a format for representing semantic information about the robot structure.
+    A URDF file must exist for this robot as well, where the joints and the links that are referenced are defined
+-->
+<robot name="xMate_robot">
+    <group name="rokae_arm">
+        <chain base_link="xMateXB4h_base" tip_link="xMateXB4h_link6"/>
+    </group>
+    <group_state name="init_pose" group="rokae_arm">
+        <joint name="joint1" value="0"/>
+        <joint name="joint2" value="0"/>
+        <joint name="joint3" value="0"/>
+        <joint name="joint4" value="0"/>
+        <joint name="joint5" value="0"/>
+        <joint name="joint6" value="0"/>
+    </group_state>
+    <virtual_joint name="base" type="fixed" parent_frame="world" child_link="xMateXB4h_base"/>
+
+    <disable_collisions link1="xMateXB4h_base" link2="xMateXB4h_link1" reason="Adjacent"/>
+    <disable_collisions link1="xMateXB4h_link1" link2="xMateXB4h_link2" reason="Adjacent"/>
+    <disable_collisions link1="xMateXB4h_link1" link2="xMateXB4h_link3" reason="Never"/>
+    <disable_collisions link1="xMateXB4h_link2" link2="xMateXB4h_link3" reason="Adjacent"/>
+    <disable_collisions link1="xMateXB4h_link2" link2="xMateXB4h_link4" reason="Never"/>
+    <disable_collisions link1="xMateXB4h_link3" link2="xMateXB4h_link4" reason="Adjacent"/>
+    <disable_collisions link1="xMateXB4h_link3" link2="xMateXB4h_link5" reason="Never"/>
+    <disable_collisions link1="xMateXB4h_link3" link2="xMateXB4h_link6" reason="Never"/>
+    <disable_collisions link1="xMateXB4h_link4" link2="xMateXB4h_link5" reason="Adjacent"/>
+    <disable_collisions link1="xMateXB4h_link4" link2="xMateXB4h_link6" reason="Never"/>
+    <disable_collisions link1="xMateXB4h_link5" link2="xMateXB4h_link6" reason="Adjacent"/>
+</robot>

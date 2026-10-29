@@ -1,0 +1,64 @@
+# joint_limits.yaml — aligned with AR3-3_07R-W4C5C5.urdf.xacro (仓三)
+
+/**:
+  ros__parameters:
+    default_velocity_scaling_factor: 0.1
+    default_acceleration_scaling_factor: 0.1
+
+    joint_limits:
+      joint1:
+        has_velocity_limits: true
+        max_velocity: 3.05432619
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -3.1067
+        max_position: 3.1067
+      joint2:
+        has_velocity_limits: true
+        max_velocity: 3.05432619
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -2.0944
+        max_position: 2.0944
+      joint3:
+        has_velocity_limits: true
+        max_velocity: 4.71238898
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -3.1067
+        max_position: 3.1067
+      joint4:
+        has_velocity_limits: true
+        max_velocity: 4.71238898
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -1.0472
+        max_position: 2.5307
+      joint5:
+        has_velocity_limits: true
+        max_velocity: 4.18879020
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -3.1067
+        max_position: 3.1067
+      joint6:
+        has_velocity_limits: true
+        max_velocity: 4.18879020
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -1.0472
+        max_position: 1.0472
+      joint7:
+        has_velocity_limits: true
+        max_velocity: 4.18879020
+        has_acceleration_limits: true
+        max_acceleration: 0.5
+        has_position_limits: true
+        min_position: -1.5708
+        max_position: 1.5708
