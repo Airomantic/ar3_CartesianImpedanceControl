@@ -33,7 +33,7 @@ exec_clean() {
 }
 
 # 运行类前置: source ROS + 本工作空间 install
-prelude_run=". /opt/ros/$DISTRO/setup.bash; cd '$WS_DIR'; . install/setup.bash; "
+prelude_run=". /opt/ros/$DISTRO/setup.bash; cd '$WS_DIR'; . install/local_setup.bash; "
 # 编译类前置: 只 source ROS (不 source 自己的 install, 它正在编译)
 # 默认限 make 并行到 -j4: Jazzy 的 rosidl 生成器(empy4)在全核 -j24 满载下偶发段错误
 #   (rokae_msgs 生成 external_force.hpp 时 core dump)。降并行即解。
@@ -52,6 +52,18 @@ case "${1:-help}" in
   ros2)
     shift
     exec_clean "$prelude_run" ros2 "$@"
+    ;;
+  impedance-wait-state)
+    shift
+    exec_clean "$prelude_run" /usr/bin/python3 \
+      "$WS_DIR/scripts/ar3_wait_cartesian_state.py" "$@"
+    ;;
+  impedance-teleop)
+    shift
+    exec 9>"$WS_DIR/.venv-teleop/impedance-teleop-domain-${ROS_DOMAIN_ID:-0}.lock"
+    flock -n 9 || { echo "笛卡尔阻抗遥操已在当前 ROS 域运行" >&2; exit 1; }
+    exec_clean "$prelude_run" /usr/bin/python3 \
+      "$WS_DIR/scripts/ar3_cartesian_impedance_teleop.py" --ros-args "$@"
     ;;
   teleop)
     shift
@@ -96,6 +108,8 @@ case "${1:-help}" in
   ros2     任意 ros2 命令
   teleop   启动 AR3R 重定向节点，默认 dry_run=true（只预览，不发送真机指令）
   teleop-monitor  只读显示目标、IK 预览和实际末端的位移及第七轴限位余量
+  impedance-teleop  原生实时笛卡尔阻抗遥操（100 Hz 目标，SDK 1 kHz，默认 dry_run=true）
+  impedance-wait-state  只读等待实际 RT 状态；SDK fault/stop failed 或依赖退出时立即报错
   shell    进入干净的交互式 bash
 示例:
   $0 build --packages-select rokae_hardware
