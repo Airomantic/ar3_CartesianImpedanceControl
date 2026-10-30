@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ar3_cartesian_impedance</name>
+  <version>0.1.0</version>
+  <description>AR3 Cartesian impedance command and observation bridge for xCoreSDK 0.7.1 AR.</description>
+  <maintainer email="robot@example.com">AR3 maintainers</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>eigen</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
