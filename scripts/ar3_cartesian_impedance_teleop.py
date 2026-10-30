@@ -33,6 +33,10 @@ class CartesianTeleop(Node):
             "service_timeout_s": 2.0,
             "max_angular_speed_rad_s": 0.15,
             "max_translation_lead_m": 0.01, "max_rotation_lead_rad": 0.05,
+            # Command shaping is intentionally tighter than the existing SDK
+            # tracking stop limits. Feedback can move between ROS samples;
+            # touching a shaping boundary must not end a healthy RT hold.
+            "max_tracking_error_m": 0.03, "max_tracking_error_rad": 0.15,
             "direction_diagnostics_hz": 1.0,
             "desired_wrench": [0.] * 6,
         }
@@ -41,9 +45,11 @@ class CartesianTeleop(Node):
         self.p = lambda key: self.get_parameter(key).value
         for key in ("rate_hz", "target_timeout_s", "feedback_timeout_s",
                     "max_linear_speed_m_s", "max_angular_speed_rad_s", "service_timeout_s",
-                    "max_translation_lead_m", "max_rotation_lead_rad"):
+                    "max_translation_lead_m", "max_rotation_lead_rad",
+                    "max_tracking_error_m", "max_tracking_error_rad"):
             if not np.isfinite(self.p(key)) or self.p(key) <= 0:
                 raise ValueError(f"{key} must be finite and positive")
+        self.validate_tracking_limits()
         if not np.isfinite(self.p("clutch_timeout_s")) or self.p("clutch_timeout_s") < 0:
             raise ValueError("clutch_timeout_s must be finite and nonnegative")
         if not np.isfinite(self.p("direction_diagnostics_hz")) or not 0 <= self.p("direction_diagnostics_hz") <= 10:
@@ -60,6 +66,9 @@ class CartesianTeleop(Node):
         self.clutch = False
         self.active = False
         self.armed = False
+        self.sdk_active = False
+        self.holding = self.resuming = False
+        self.last_values = self.session_parameters = None
         self.pending = None
         self.stop_waiting = False
         self.stop_failed_reason = ""
@@ -95,7 +104,21 @@ class CartesianTeleop(Node):
         self.get_logger().info(
             f"Latest pose targets at {self.p('rate_hz'):.0f} Hz; SDK interpolates at 1000 Hz; "
             f"translation limit={self.p('max_linear_speed_m_s'):.3f} m/s; "
-            "K/desired wrench fixed during each clutch session; D/M unspecified and not applied")
+            "K/desired wrench fixed during each continuous RT session; D/M unspecified and not applied")
+        self.get_logger().info(
+            "After SDK active, clutch release holds the last TCP with zero desired wrench; "
+            "press again to re-anchor and resume; explicit stop, faults and watchdogs still stop RT")
+        self.get_logger().info(
+            f"Command lead limits={self.p('max_translation_lead_m')*1000:.1f} mm/"
+            f"{self.p('max_rotation_lead_rad'):.3f} rad; tracking stop limits="
+            f"{self.p('max_tracking_error_m')*1000:.1f} mm/"
+            f"{self.p('max_tracking_error_rad'):.3f} rad")
+
+    def validate_tracking_limits(self):
+        for lead, tracking in (("max_translation_lead_m", "max_tracking_error_m"),
+                               ("max_rotation_lead_rad", "max_tracking_error_rad")):
+            if self.p(lead) > self.p(tracking):
+                raise ValueError(f"{lead} must not exceed {tracking}")
 
     def on_parameters(self, parameters):
         for parameter in parameters:
@@ -107,9 +130,13 @@ class CartesianTeleop(Node):
         return SetParametersResult(successful=True)
 
     def halt(self, reason):
-        if self.active or (self.armed and not self.stop_waiting):
+        repeated_release = (reason == "Clutch released" and self.pending is not None
+                            and self.pending[0] == "stop")
+        if self.active or self.holding or (self.armed and not self.stop_waiting and not repeated_release):
             self.get_logger().warning(reason)
         self.active = False
+        self.sdk_active = self.holding = self.resuming = False
+        self.last_values = self.session_parameters = None
         self.must_release = True
         self.source_anchor = None
         # Serialize stop after any outstanding enable; never re-arm on a stale response.
@@ -127,6 +154,8 @@ class CartesianTeleop(Node):
                 f"SDK {reason}; automatic stop retries suspended; takeover blocked until stopped confirmation")
         self.stop_failed_reason = reason
         self.active = False
+        self.sdk_active = self.holding = self.resuming = False
+        self.last_values = self.session_parameters = None
         self.armed = self.stop_waiting = True
         self.must_release = True
         self.source_anchor = None
@@ -139,6 +168,15 @@ class CartesianTeleop(Node):
         # Halt the local session as well; a stop RPC confirms cleanup completion.
         if msg.data.startswith("stop failed:"):
             self.latch_stop_failure(msg.data)
+            return
+        if msg.data.startswith("active:") and self.armed and (self.active or self.holding):
+            self.sdk_active = True
+        if (msg.data.startswith(("fault:", "offline:")) or
+                "RT monitoring restoration failed" in msg.data or "monitoring unavailable" in msg.data):
+            self.halt(f"SDK {msg.data}; release clutch")
+            return
+        if self.sdk_active and msg.data.startswith(("connecting:", "monitoring:", "armed:", "initializing:")):
+            self.halt(f"SDK left active RT session: {msg.data}; release clutch")
             return
         if self.stop_failed_reason:
             if msg.data.startswith("stopped:"):
@@ -177,6 +215,11 @@ class CartesianTeleop(Node):
         self.pose_pub.publish(msg)  # Actual SDK TCP pose for Daimon's feedback loop.
 
     def on_target(self, msg):
+        # The released hand cannot change a held robot target. Some hand
+        # publishers reset their target while disabled; a new valid message is
+        # required after the next press before following resumes.
+        if self.holding and not self.clutch:
+            return
         try:
             self.target = self.decode_pose(msg)
         except ValueError as error:
@@ -187,8 +230,51 @@ class CartesianTeleop(Node):
     def on_clutch(self, msg):
         self.clutch, self.clutch_at = bool(msg.data), time.monotonic()
         if not self.clutch:
+            if self.holding:
+                return  # Repeated release packets cannot move the held target.
+            if (self.active and self.armed and self.sdk_active and self.pending is None
+                    and not self.stop_waiting and not self.stop_failed_reason
+                    and not self.p("dry_run") and self.last_values is not None
+                    and np.all(self.last_values[6:12] == 0.)):
+                self.active = self.resuming = False
+                self.holding = True
+                self.must_release = False
+                self.source_anchor = None
+                self.get_logger().info(
+                    "Clutch released: holding the last commanded TCP in the active RT session; "
+                    "zero desired wrench, feedback and force guards remain active")
+                return
             self.halt("Clutch released")
             self.must_release = False
+
+    def validate_tracking_error(self, command):
+        p, r = command
+        translation_error = np.linalg.norm(p-self.pose[0])
+        rotation_lead = np.arccos(np.clip((np.trace(r @ self.pose[1].T)-1.)/2., -1., 1.))
+        if (translation_error > self.p("max_tracking_error_m") + 1e-9 or
+                rotation_lead > self.p("max_tracking_error_rad") + 1e-9):
+            mode = "hold" if self.holding or self.resuming else "follow"
+            raise ValueError(
+                f"Measured TCP exceeded tracking limits ({mode}): "
+                f"translation={translation_error*1000:.3f} mm "
+                f"(limit={self.p('max_tracking_error_m')*1000:.3f} mm), "
+                f"rotation={rotation_lead:.6f} rad "
+                f"(limit={self.p('max_tracking_error_rad'):.6f} rad); "
+                "release clutch to re-anchor")
+
+    def publish_command(self, values):
+        msg = Float64MultiArray(data=values.tolist())
+        self.preview_pub.publish(msg)
+        if not self.p("dry_run"):
+            self.command_pub.publish(msg)
+            self.last_values = values.copy()
+
+    def publish_hold(self):
+        try:
+            self.validate_tracking_error(self.last_command)
+            self.publish_command(self.last_values)
+        except ValueError as error:
+            self.halt(str(error))
 
     def report_direction(self, now, mapped, command):
         rate = self.p("direction_diagnostics_hz")
@@ -257,7 +343,7 @@ class CartesianTeleop(Node):
                     self.stop_retry_at = now + 0.2
                 self.halt("SDK service failure")
                 return
-        if not self.active and self.armed:
+        if not self.active and self.armed and not self.holding:
             self.halt("Stopping inactive session")
             return
         if self.state is None or self.pose is None:
@@ -273,6 +359,19 @@ class CartesianTeleop(Node):
         if stale:
             self.halt("Feedback stale: " + "; ".join(stale) + "; release clutch")
             return
+        if self.holding:
+            if self.clutch and not self.must_release:
+                self.holding = False
+                self.resuming = self.active = True
+                self.takeover_at = now
+                self.robot_anchor = (self.pose[0].copy(), self.pose[1].copy())
+                self.source_anchor = None
+                # Keep last_command as the slew origin. The new hand anchor
+                # uses measured TCP without jumping the existing RT target.
+                self.get_logger().info(
+                    "Clutch resume: same RT session, anchored to measured TCP; waiting for fresh target")
+            self.publish_hold()
+            return
         if not self.clutch or self.must_release:
             return
         if not self.active:
@@ -286,18 +385,24 @@ class CartesianTeleop(Node):
         if self.target_at <= self.takeover_at:
             if now-self.takeover_at > self.p("target_timeout_s"):
                 self.halt("No fresh target after clutch takeover")
+            elif self.resuming:
+                self.publish_hold()
             return
         if now-self.target_at > self.p("target_timeout_s"):
             self.halt(f"Daimon target stale: age={now-self.target_at:.3f}s; release clutch")
             return
         if self.source_anchor is None:
             self.source_anchor = (self.target[0].copy(), self.target[1].copy())
+        self.resuming = False
         if not self.p("dry_run") and not self.armed:
             if self.enable_client.service_is_ready():
                 self.armed = True  # An outstanding enable may already have reached the controller.
                 self.pending = ("enable", self.enable_client.call_async(SetBool.Request(data=True)), now)
             return
         try:
+            # Test displacement from the already-issued target before shaping
+            # a new one; a slew step must not conceal a tracking-limit breach.
+            self.validate_tracking_error(self.last_command)
             mapped = map_pose(self.target, self.source_anchor, self.robot_anchor, self.correction)
             # Bound tracking error even while the RT session initializes or an
             # external contact holds the robot. The SDK consumes the latest
@@ -308,19 +413,16 @@ class CartesianTeleop(Node):
                                  self.p("max_linear_speed_m_s")*dt,
                                  self.p("max_angular_speed_rad_s")*dt)
             p, r = command
-            rotation_lead = np.arccos(np.clip((np.trace(r @ self.pose[1].T)-1.)/2., -1., 1.))
-            if (np.linalg.norm(p-self.pose[0]) > self.p("max_translation_lead_m") + 1e-9 or
-                    rotation_lead > self.p("max_rotation_lead_rad") + 1e-9):
-                # External motion can make the tracking and slew constraints
-                # incompatible. Do not project again and create a command jump.
-                raise ValueError("Measured TCP moved beyond tracking limits; release clutch to re-anchor")
+            # Feedback motion can temporarily put the previous command beyond
+            # the soft lead cap. Preserve slew continuity while returning to
+            # that cap; the separate tracking guard still bounds displacement.
+            self.validate_tracking_error(command)
             self.last_command = command
             self.report_direction(now, mapped, command)
-            values = np.concatenate((p, matrix_rpy(r), self.p("desired_wrench"), self.state[12:]))
-            msg = Float64MultiArray(data=values.tolist())
-            self.preview_pub.publish(msg)
-            if not self.p("dry_run"):
-                self.command_pub.publish(msg)
+            if self.session_parameters is None:
+                self.session_parameters = np.concatenate((self.p("desired_wrench"), self.state[12:]))
+            values = np.concatenate((p, matrix_rpy(r), self.session_parameters))
+            self.publish_command(values)
         except ValueError as error:
             self.halt(str(error))
 
@@ -333,6 +435,9 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        node.active = node.sdk_active = node.holding = node.resuming = False
+        node.last_values = node.session_parameters = None
+        node.must_release = True
         if rclpy.ok() and not node.stop_failed_reason and node.stop_client.service_is_ready():
             future = node.stop_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(node, future, timeout_sec=1.)

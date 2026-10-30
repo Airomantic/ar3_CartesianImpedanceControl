@@ -60,7 +60,8 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     auto_power_ = parameter("auto_power_on", false);
     recover_stale_rt_ = parameter("recover_stale_rt_on_startup", false);
     override_enabled_ = parameter("load_override_enabled", false);
-    override_load_ = payload_load(parameter("load_mass_kg", 1.1),
+    mass_override_enabled_ = parameter("load_mass_override_enabled", false);
+    override_load_ = payload_load(parameter("load_mass_kg", 1.60),
       parameter("load_cog_m", std::vector<double>{0, 0.008, 0.091}),
       parameter("load_inertia_kg_m2", std::vector<double>{0, 0, 0}));
     timeout_s_ = positive("command_timeout_s", 0.5);
@@ -204,7 +205,8 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   void publish_metadata() {
     std_msgs::msg::String message;
     message.data = R"JSON({"schema":"pose6,wrench6,K6,D6,M6","motion_backend":"rt","control_mode":"cartesianImpedance","pose_stream_hz":1000,"session_fixed_K_wrench":true,"pose":"TCP xyz[m],rpy[rad];Rz*Ry*Rx","frame":"robot_base","pose_source":"RtSupportedFields.tcpPose_m","measured_wrench_source":"xCoreSDK.RtSupportedFields.tauExt_inBase (tau_ext_base)","controller_reported":true,"raw_sensor":false,"wrench_component_mapping":"assumed_Fxyz_Txyz_pending_vendor_or_physical_validation","wrench_origin":"not_documented_by_sdk_field","force_frame":"world; base wrench rotated; diagonal stiffness must remain representable","state_K":"configured_or_session_setpoint;not_controller_readback","D":"controller_default_not_applied;zero_unspecified","M":"not_supported;zero_unspecified","accepted_command":"smoothed_pose_returned_from_RT_callback;not_controller_ack_or_measured_completion","load_source":")JSON";
-    message.data += override_enabled_ ? "startup_parameter_override" : "controller_toolset";
+    message.data += override_enabled_ ? "startup_parameter_override" :
+      (mass_override_enabled_ ? "startup_mass_override_controller_cog_inertia" : "controller_toolset");
     message.data += "\",\"load_readback\":false}";
     metadata_pub_->publish(message);
   }
@@ -281,13 +283,15 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     const auto controller = payload_load(toolset.load.mass, {toolset.load.cog.begin(), toolset.load.cog.end()},
       {toolset.load.inertia.begin(), toolset.load.inertia.end()});
     selected_load_ = select_payload_load(override_enabled_, controller, override_load_);
+    if(mass_override_enabled_) selected_load_.mass_kg = override_load_.mass_kg;
     base_in_world_ = robot_->baseFrame(ec); check(ec, "baseFrame"); pose_transform(base_in_world_);
     RCLCPP_INFO(get_logger(), "Configured TCP offset (flange->TCP)=[%.4f %.4f %.4f; %.4f %.4f %.4f]",
       tool_pose_[0], tool_pose_[1], tool_pose_[2], tool_pose_[3], tool_pose_[4], tool_pose_[5]);
     RCLCPP_INFO(get_logger(), "world_T_base=[%.4f %.4f %.4f; %.4f %.4f %.4f]; RT TCP commands and state are directly base coordinates",
       base_in_world_[0], base_in_world_[1], base_in_world_[2], base_in_world_[3], base_in_world_[4], base_in_world_[5]);
     RCLCPP_INFO(get_logger(), "RT load source=%s mass=%.3fkg COG[m]=[%.5f %.5f %.5f] inertia[kg*m^2]=[%.6f %.6f %.6f] (configuration, not force readback)",
-      override_enabled_ ? "startup_parameter_override" : "controller_toolset", selected_load_.mass_kg,
+      override_enabled_ ? "startup_parameter_override" :
+        (mass_override_enabled_ ? "startup_mass_override_controller_cog_inertia" : "controller_toolset"), selected_load_.mass_kg,
       selected_load_.cog_m[0], selected_load_.cog_m[1], selected_load_.cog_m[2],
       selected_load_.inertia_kg_m2[0], selected_load_.inertia_kg_m2[1], selected_load_.inertia_kg_m2[2]);
   }
@@ -419,7 +423,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     setup_rpc("check power", [this](auto &ec) {
       if(robot_->powerState(ec) != rokae::PowerState::on && !ec) throw std::runtime_error("robot must be powered on");
     });
-    setup_rpc("setLoad(existing controller payload)", [this](auto &ec) {
+    setup_rpc("setLoad(selected payload)", [this](auto &ec) {
       rokae::Load load; load.mass = selected_load_.mass_kg; load.cog = selected_load_.cog_m; load.inertia = selected_load_.inertia_kg_m2;
       rt_->setLoad(load, ec);
     });
@@ -644,7 +648,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   }
 
   std::string robot_ip_, local_ip_, frame_id_;
-  bool connect_{}, allow_motion_{}, auto_power_{}, recover_stale_rt_{}, override_enabled_{}, user_armed_{};
+  bool connect_{}, allow_motion_{}, auto_power_{}, recover_stale_rt_{}, override_enabled_{}, mass_override_enabled_{}, user_armed_{};
   double timeout_s_{}, state_timeout_s_{}, startup_timeout_s_{}, stop_timeout_s_{}, max_step_m_{}, max_step_rad_{}, radius_{};
   double speed_m_s_{}, angular_speed_{}, acceleration_{}, angular_acceleration_{};
   int priority_{}, cpu_{}, network_tolerance_{};

@@ -31,9 +31,10 @@ cartesian_impedance_node:
     # default, do not send 0. M has no Cartesian virtual-mass setter.
     damping_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     mass_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    # Default uses existing controller Toolset.load, copied to RT before startMove.
-    # Values below are uncalibrated estimates and are not used while disabled.
+    # Override only mass; preserve controller Toolset.load COG and inertia.
+    # Full override stays disabled, so the COG/inertia estimates below are unused.
     load_override_enabled: false
-    load_mass_kg: 1.1
+    load_mass_override_enabled: true
+    load_mass_kg: 1.60
     load_cog_m: [0.0, 0.008, 0.091]
     load_inertia_kg_m2: [0.0, 0.0, 0.0]
