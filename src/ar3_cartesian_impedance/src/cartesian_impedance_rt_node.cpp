@@ -68,10 +68,10 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     state_timeout_s_ = positive("rt_state_timeout_s", 0.01);
     startup_timeout_s_ = positive("startup_timeout_s", 5.0);
     stop_timeout_s_ = positive("stop_timeout_s", 3.0);
-    max_step_m_ = positive("max_translation_step_m", 0.03);
+    max_step_m_ = positive("max_translation_step_m", 0.05);
     max_step_rad_ = positive("max_rotation_step_rad", 0.15);
     radius_ = positive("workspace_radius_m", 0.25);
-    speed_m_s_ = positive("speed_mm_s", 20.0) / 1000.0;
+    speed_m_s_ = positive("speed_mm_s", 40.0) / 1000.0;
     acceleration_ = positive("linear_acceleration_m_s2", 0.1);
     angular_acceleration_ = positive("angular_acceleration_rad_s2", 0.5);
     const double publish_rate = positive("publish_rate_hz", 50.0);
@@ -84,7 +84,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     max_stiffness_ = six_parameter("max_stiffness", {1000, 1000, 1000, 100, 100, 100});
     max_wrench_ = six_parameter("max_wrench", {20, 20, 20, 3, 3, 3});
     max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 6});
-    const auto velocity = six_parameter("max_velocity", {0.03, 0.03, 0.03, 0.15, 0.15, 0.15});
+    const auto velocity = six_parameter("max_velocity", {0.04, 0.04, 0.04, 0.15, 0.15, 0.15});
     angular_speed_ = std::min({velocity[3], velocity[4], velocity[5]});
     speed_m_s_ = std::min({speed_m_s_, velocity[0], velocity[1], velocity[2]});
     if(connect_ && local_ip_.empty()) throw std::invalid_argument("RT requires explicit local_ip on the robot network");

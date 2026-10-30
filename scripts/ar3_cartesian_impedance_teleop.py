@@ -29,14 +29,14 @@ class CartesianTeleop(Node):
             "rate_hz": 100., "target_timeout_s": 0.25, "feedback_timeout_s": 0.5,
             # MessageBridge forwards right_teleop_en when present; its protocol
             # does not promise a periodic clutch heartbeat. Zero means latched.
-            "clutch_timeout_s": 0., "max_linear_speed_m_s": 0.02,
+            "clutch_timeout_s": 0., "max_linear_speed_m_s": 0.04,
             "service_timeout_s": 2.0,
             "max_angular_speed_rad_s": 0.15,
-            "max_translation_lead_m": 0.01, "max_rotation_lead_rad": 0.05,
+            "max_translation_lead_m": 0.04, "max_rotation_lead_rad": 0.05,
             # Command shaping is intentionally tighter than the existing SDK
             # tracking stop limits. Feedback can move between ROS samples;
             # touching a shaping boundary must not end a healthy RT hold.
-            "max_tracking_error_m": 0.03, "max_tracking_error_rad": 0.15,
+            "max_tracking_error_m": 0.05, "max_tracking_error_rad": 0.15,
             "direction_diagnostics_hz": 1.0,
             "desired_wrench": [0.] * 6,
         }
