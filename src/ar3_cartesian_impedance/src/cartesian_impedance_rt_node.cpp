@@ -83,7 +83,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     mass_ = six_parameter("mass_metadata", {});
     max_stiffness_ = six_parameter("max_stiffness", {1000, 1000, 1000, 100, 100, 100});
     max_wrench_ = six_parameter("max_wrench", {20, 20, 20, 3, 3, 3});
-    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 6});
+    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 16});
     const auto velocity = six_parameter("max_velocity", {0.04, 0.04, 0.04, 0.15, 0.15, 0.15});
     angular_speed_ = std::min({velocity[3], velocity[4], velocity[5]});
     speed_m_s_ = std::min({speed_m_s_, velocity[0], velocity[1], velocity[2]});

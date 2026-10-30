@@ -26,7 +26,7 @@ cartesian_impedance_node:
     stiffness: [500.0, 500.0, 500.0, 50.0, 50.0, 50.0]
     max_stiffness: [1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0]
     max_wrench: [20.0, 20.0, 20.0, 3.0, 3.0, 3.0]
-    max_measured_wrench: [40.0, 40.0, 40.0, 6.0, 6.0, 6.0]
+    max_measured_wrench: [40.0, 40.0, 40.0, 6.0, 6.0, 16.0]
     max_velocity: [0.04, 0.04, 0.04, 0.15, 0.15, 0.15]
     # D setter exists but its units/range are undocumented: preserve controller
     # default, do not send 0. M has no Cartesian virtual-mass setter.
