@@ -1,0 +1,39 @@
+cartesian_impedance_node:
+  ros__parameters:
+    robot_ip: "192.168.0.160"
+    # Required local IPv4 on the robot subnet; oneClick passes ARM_LOCAL_IP.
+    local_ip: ""
+    connect_robot: true
+    enable_motion: false
+    auto_power_on: false
+    frame_id: "AR3-3_07R-W4C5C5_base"
+    publish_rate_hz: 50.0
+    command_timeout_s: 0.5
+    rt_state_timeout_s: 0.01
+    startup_timeout_s: 5.0
+    stop_timeout_s: 3.0
+    rt_priority: 0
+    rt_cpu: -1
+    network_tolerance_percent: 20
+    max_translation_step_m: 0.03
+    max_rotation_step_rad: 0.15
+    workspace_radius_m: 0.25
+    speed_mm_s: 20.0
+    linear_acceleration_m_s2: 0.1
+    angular_acceleration_rad_s2: 0.5
+    # K and desired wrench are fixed by the first valid command of each session.
+    stiffness: [500.0, 500.0, 500.0, 50.0, 50.0, 50.0]
+    max_stiffness: [1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0]
+    max_wrench: [20.0, 20.0, 20.0, 3.0, 3.0, 3.0]
+    max_measured_wrench: [40.0, 40.0, 40.0, 6.0, 6.0, 6.0]
+    max_velocity: [0.03, 0.03, 0.03, 0.15, 0.15, 0.15]
+    # D setter exists but its units/range are undocumented: preserve controller
+    # default, do not send 0. M has no Cartesian virtual-mass setter.
+    damping_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    mass_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # Default uses existing controller Toolset.load, copied to RT before startMove.
+    # Values below are uncalibrated estimates and are not used while disabled.
+    load_override_enabled: false
+    load_mass_kg: 1.1
+    load_cog_m: [0.0, 0.008, 0.091]
+    load_inertia_kg_m2: [0.0, 0.0, 0.0]
