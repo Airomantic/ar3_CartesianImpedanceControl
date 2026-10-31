@@ -15,25 +15,27 @@ cartesian_impedance_node:
     rt_priority: 0
     rt_cpu: -1
     network_tolerance_percent: 20
-    max_translation_step_m: 0.03
+    # Tracking stop distance, separate from teleop's 40 mm command lead cap.
+    max_translation_step_m: 0.05
     max_rotation_step_rad: 0.15
     workspace_radius_m: 0.25
-    speed_mm_s: 20.0
+    speed_mm_s: 40.0
     linear_acceleration_m_s2: 0.1
     angular_acceleration_rad_s2: 0.5
     # K and desired wrench are fixed by the first valid command of each session.
     stiffness: [500.0, 500.0, 500.0, 50.0, 50.0, 50.0]
     max_stiffness: [1000.0, 1000.0, 1000.0, 100.0, 100.0, 100.0]
     max_wrench: [20.0, 20.0, 20.0, 3.0, 3.0, 3.0]
-    max_measured_wrench: [40.0, 40.0, 40.0, 6.0, 6.0, 6.0]
-    max_velocity: [0.03, 0.03, 0.03, 0.15, 0.15, 0.15]
+    max_measured_wrench: [40.0, 40.0, 40.0, 6.0, 6.0, 16.0]
+    max_velocity: [0.04, 0.04, 0.04, 0.15, 0.15, 0.15]
     # D setter exists but its units/range are undocumented: preserve controller
     # default, do not send 0. M has no Cartesian virtual-mass setter.
     damping_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     mass_metadata: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    # Default uses existing controller Toolset.load, copied to RT before startMove.
-    # Values below are uncalibrated estimates and are not used while disabled.
+    # Override only mass; preserve controller Toolset.load COG and inertia.
+    # Full override stays disabled, so the COG/inertia estimates below are unused.
     load_override_enabled: false
-    load_mass_kg: 1.1
+    load_mass_override_enabled: true
+    load_mass_kg: 1.60
     load_cog_m: [0.0, 0.008, 0.091]
     load_inertia_kg_m2: [0.0, 0.0, 0.0]

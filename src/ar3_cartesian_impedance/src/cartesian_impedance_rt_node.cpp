@@ -2,6 +2,7 @@
 #include "ar3_cartesian_impedance/rt_startup_recovery.hpp"
 #include "ar3_cartesian_impedance/load.hpp"
 #include "ar3_cartesian_impedance/wrench_guard.hpp"
+#include "ar3_cartesian_impedance/workspace_recenter.hpp"
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/wrench_stamped.hpp>
@@ -60,17 +61,18 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     auto_power_ = parameter("auto_power_on", false);
     recover_stale_rt_ = parameter("recover_stale_rt_on_startup", false);
     override_enabled_ = parameter("load_override_enabled", false);
-    override_load_ = payload_load(parameter("load_mass_kg", 1.1),
+    mass_override_enabled_ = parameter("load_mass_override_enabled", false);
+    override_load_ = payload_load(parameter("load_mass_kg", 1.60),
       parameter("load_cog_m", std::vector<double>{0, 0.008, 0.091}),
       parameter("load_inertia_kg_m2", std::vector<double>{0, 0, 0}));
     timeout_s_ = positive("command_timeout_s", 0.5);
     state_timeout_s_ = positive("rt_state_timeout_s", 0.01);
     startup_timeout_s_ = positive("startup_timeout_s", 5.0);
     stop_timeout_s_ = positive("stop_timeout_s", 3.0);
-    max_step_m_ = positive("max_translation_step_m", 0.03);
+    max_step_m_ = positive("max_translation_step_m", 0.05);
     max_step_rad_ = positive("max_rotation_step_rad", 0.15);
     radius_ = positive("workspace_radius_m", 0.25);
-    speed_m_s_ = positive("speed_mm_s", 20.0) / 1000.0;
+    speed_m_s_ = positive("speed_mm_s", 40.0) / 1000.0;
     acceleration_ = positive("linear_acceleration_m_s2", 0.1);
     angular_acceleration_ = positive("angular_acceleration_rad_s2", 0.5);
     const double publish_rate = positive("publish_rate_hz", 50.0);
@@ -82,8 +84,8 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     mass_ = six_parameter("mass_metadata", {});
     max_stiffness_ = six_parameter("max_stiffness", {1000, 1000, 1000, 100, 100, 100});
     max_wrench_ = six_parameter("max_wrench", {20, 20, 20, 3, 3, 3});
-    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 6});
-    const auto velocity = six_parameter("max_velocity", {0.03, 0.03, 0.03, 0.15, 0.15, 0.15});
+    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 16});
+    const auto velocity = six_parameter("max_velocity", {0.04, 0.04, 0.04, 0.15, 0.15, 0.15});
     angular_speed_ = std::min({velocity[3], velocity[4], velocity[5]});
     speed_m_s_ = std::min({speed_m_s_, velocity[0], velocity[1], velocity[2]});
     if(connect_ && local_ip_.empty()) throw std::invalid_argument("RT requires explicit local_ip on the robot network");
@@ -144,6 +146,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
       stop_requested_.store(false);
       arm_time_ns_.store(monotonic_ns());
       requested_session_.fetch_add(1);
+      recenter_pending_session_ = 0; recentered_ = {};
       user_armed_ = true;
       response->success = true;
       response->message = "armed: waiting for a NEW command; RT K/wrench remain fixed for this session";
@@ -151,6 +154,31 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     stop_srv_ = create_service<std_srvs::srv::Trigger>(topic("stop"), [this](
         const std::shared_ptr<std_srvs::srv::Trigger::Request>, std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
       request_stop(); response->success = phase_.load() != Phase::stop_failed; response->message = stop_response();
+    });
+    recenter_srv_ = create_service<std_srvs::srv::Trigger>(topic("recenter_workspace"), [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+      consume_snapshot();
+      const auto session = requested_session_.load();
+      if(!user_armed_ || stop_requested_.load() || phase_.load() != Phase::active ||
+         !latest_.measured_ns || age_s(latest_.measured_ns) > timeout_s_) {
+        response->success = false; response->message = "workspace recenter requires fresh active RT hold"; return;
+      }
+      WorkspaceCenter center;
+      if(recenter_results_.read(center) && center.session == session) {
+        recentered_ = center; arm_origin_ = center.pose;
+      }
+      response->success = true;
+      if(recentered_.session == session) {
+        std::ostringstream json; json << std::setprecision(17)
+          << "{\"state\":\"recentered\",\"session\":" << session << ",\"origin\":[";
+        for(int i=0; i<6; ++i) { if(i) json << ','; json << recentered_.pose[i]; }
+        json << "]}"; response->message = json.str(); return;
+      }
+      if(recenter_pending_session_ != session) {
+        recenter_pending_session_ = session; recenter_requests_.publish(session);
+      }
+      response->message = "{\"state\":\"pending\"}";
     });
     publish_timer_ = create_wall_timer(std::chrono::duration<double>(1 / publish_rate), [this] { publish_tick(); });
     RCLCPP_INFO(get_logger(), "RT measured six-channel source=tau_ext_base; Fxyz/Txyz mapping assumed pending validation; origin undocumented; not raw wrist sensor");
@@ -204,8 +232,9 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   void publish_metadata() {
     std_msgs::msg::String message;
     message.data = R"JSON({"schema":"pose6,wrench6,K6,D6,M6","motion_backend":"rt","control_mode":"cartesianImpedance","pose_stream_hz":1000,"session_fixed_K_wrench":true,"pose":"TCP xyz[m],rpy[rad];Rz*Ry*Rx","frame":"robot_base","pose_source":"RtSupportedFields.tcpPose_m","measured_wrench_source":"xCoreSDK.RtSupportedFields.tauExt_inBase (tau_ext_base)","controller_reported":true,"raw_sensor":false,"wrench_component_mapping":"assumed_Fxyz_Txyz_pending_vendor_or_physical_validation","wrench_origin":"not_documented_by_sdk_field","force_frame":"world; base wrench rotated; diagonal stiffness must remain representable","state_K":"configured_or_session_setpoint;not_controller_readback","D":"controller_default_not_applied;zero_unspecified","M":"not_supported;zero_unspecified","accepted_command":"smoothed_pose_returned_from_RT_callback;not_controller_ack_or_measured_completion","load_source":")JSON";
-    message.data += override_enabled_ ? "startup_parameter_override" : "controller_toolset";
-    message.data += "\",\"load_readback\":false}";
+    message.data += override_enabled_ ? "startup_parameter_override" :
+      (mass_override_enabled_ ? "startup_mass_override_controller_cog_inertia" : "controller_toolset");
+    message.data += "\",\"load_readback\":false,\"workspace_recenter\":\"active_hold_once_v1\"}";
     metadata_pub_->publish(message);
   }
   void consume_snapshot() { snapshots_.read(latest_); }
@@ -281,13 +310,15 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     const auto controller = payload_load(toolset.load.mass, {toolset.load.cog.begin(), toolset.load.cog.end()},
       {toolset.load.inertia.begin(), toolset.load.inertia.end()});
     selected_load_ = select_payload_load(override_enabled_, controller, override_load_);
+    if(mass_override_enabled_) selected_load_.mass_kg = override_load_.mass_kg;
     base_in_world_ = robot_->baseFrame(ec); check(ec, "baseFrame"); pose_transform(base_in_world_);
     RCLCPP_INFO(get_logger(), "Configured TCP offset (flange->TCP)=[%.4f %.4f %.4f; %.4f %.4f %.4f]",
       tool_pose_[0], tool_pose_[1], tool_pose_[2], tool_pose_[3], tool_pose_[4], tool_pose_[5]);
     RCLCPP_INFO(get_logger(), "world_T_base=[%.4f %.4f %.4f; %.4f %.4f %.4f]; RT TCP commands and state are directly base coordinates",
       base_in_world_[0], base_in_world_[1], base_in_world_[2], base_in_world_[3], base_in_world_[4], base_in_world_[5]);
     RCLCPP_INFO(get_logger(), "RT load source=%s mass=%.3fkg COG[m]=[%.5f %.5f %.5f] inertia[kg*m^2]=[%.6f %.6f %.6f] (configuration, not force readback)",
-      override_enabled_ ? "startup_parameter_override" : "controller_toolset", selected_load_.mass_kg,
+      override_enabled_ ? "startup_parameter_override" :
+        (mass_override_enabled_ ? "startup_mass_override_controller_cog_inertia" : "controller_toolset"), selected_load_.mass_kg,
       selected_load_.cog_m[0], selected_load_.cog_m[1], selected_load_.cog_m[2],
       selected_load_.inertia_kg_m2[0], selected_load_.inertia_kg_m2[1], selected_load_.inertia_kg_m2[2]);
   }
@@ -399,6 +430,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     connected_ready_.store(true);
   }
   void run_session() {
+    recenter_gate_.reset(); rt_recenter_session_ = 0;
     session_start_ns_ = monotonic_ns(); session_config_ = live_command_.value;
     set_phase(Phase::initializing, "initializing: RT session parameters before startMove; K/wrench fixed, D/M not applied");
     monitor_sample();
@@ -419,7 +451,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     setup_rpc("check power", [this](auto &ec) {
       if(robot_->powerState(ec) != rokae::PowerState::on && !ec) throw std::runtime_error("robot must be powered on");
     });
-    setup_rpc("setLoad(existing controller payload)", [this](auto &ec) {
+    setup_rpc("setLoad(selected payload)", [this](auto &ec) {
       rokae::Load load; load.mass = selected_load_.mass_kg; load.cog = selected_load_.cog_m; load.inertia = selected_load_.inertia_kg_m2;
       rt_->setLoad(load, ec);
     });
@@ -468,7 +500,16 @@ class CartesianImpedanceNode final : public rclcpp::Node {
         wrench_violation_ = check_wrench_limits(sample_.measured.wrench, max_measured_wrench_);
         if(wrench_violation_) loop_exit_ = LoopExit::safety_limit;
       }
-      if(loop_exit_ == LoopExit::none) output_pose_ = follower_.step(live_command_.value.pose, speed_m_s_, angular_speed_, acceleration_, angular_acceleration_);
+      if(loop_exit_ == LoopExit::none) {
+        std::uint64_t request{};
+        if(recenter_requests_.read(request) && request == active_session_) rt_recenter_session_ = request;
+        if(rt_recenter_session_ == active_session_ && fresh &&
+           recenter_gate_.observe(sample_.measured.pose, live_command_.value, output_pose_, monotonic_ns())) {
+          origin_ = sample_.measured.pose;
+          recenter_results_.publish(WorkspaceCenter{active_session_, origin_});
+        }
+        output_pose_ = follower_.step(live_command_.value.pose, speed_m_s_, angular_speed_, acceleration_, angular_acceleration_);
+      }
       if(loop_exit_ == LoopExit::none)
         validate_target(sample_.measured.pose, output_pose_, origin_, max_step_m_, max_step_rad_, radius_);
       output.pos = pose_matrix(output_pose_); output.elbow = elbow_; output.hasElbow = true;
@@ -644,7 +685,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   }
 
   std::string robot_ip_, local_ip_, frame_id_;
-  bool connect_{}, allow_motion_{}, auto_power_{}, recover_stale_rt_{}, override_enabled_{}, user_armed_{};
+  bool connect_{}, allow_motion_{}, auto_power_{}, recover_stale_rt_{}, override_enabled_{}, mass_override_enabled_{}, user_armed_{};
   double timeout_s_{}, state_timeout_s_{}, startup_timeout_s_{}, stop_timeout_s_{}, max_step_m_{}, max_step_rad_{}, radius_{};
   double speed_m_s_{}, angular_speed_{}, acceleration_{}, angular_acceleration_{};
   int priority_{}, cpu_{}, network_tolerance_{};
@@ -657,6 +698,10 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   LatestMailbox<RtCommand> commands_;
   LatestMailbox<RtSnapshot> snapshots_;
   LatestMailbox<StatusSample> statuses_;
+  LatestMailbox<std::uint64_t> recenter_requests_;
+  LatestMailbox<WorkspaceCenter> recenter_results_;
+  std::uint64_t recenter_pending_session_{};
+  WorkspaceCenter recentered_;
   RtSnapshot latest_;
   std::uint64_t published_sequence_{};
   std::thread worker_;
@@ -675,6 +720,8 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   Matrix16 tool_matrix_{};
   double elbow_{};
   RtPoseFollower follower_;
+  WorkspaceRecenterGate recenter_gate_;
+  std::uint64_t rt_recenter_session_{};
   LoopExit loop_exit_{LoopExit::none};
   WrenchViolation wrench_violation_{};
   rclcpp::Publisher<ArrayMsg>::SharedPtr state_pub_, accepted_pub_;
@@ -684,7 +731,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_, metadata_pub_;
   rclcpp::Subscription<ArrayMsg>::SharedPtr command_sub_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_srv_;
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_srv_, recenter_srv_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 };
 }  // namespace ar3_cartesian_impedance

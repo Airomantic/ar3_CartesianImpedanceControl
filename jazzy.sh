@@ -58,6 +58,11 @@ case "${1:-help}" in
     exec_clean "$prelude_run" /usr/bin/python3 \
       "$WS_DIR/scripts/ar3_wait_cartesian_state.py" "$@"
     ;;
+  impedance-capture-home)
+    shift
+    exec_clean "$prelude_run" /usr/bin/python3 \
+      "$WS_DIR/scripts/ar3_capture_home.py" "$@"
+    ;;
   impedance-teleop)
     shift
     exec 9>"$WS_DIR/.venv-teleop/impedance-teleop-domain-${ROS_DOMAIN_ID:-0}.lock"
@@ -110,6 +115,7 @@ case "${1:-help}" in
   teleop-monitor  只读显示目标、IK 预览和实际末端的位移及第七轴限位余量
   impedance-teleop  原生实时笛卡尔阻抗遥操（100 Hz 目标，SDK 1 kHz，默认 dry_run=true）
   impedance-wait-state  只读等待实际 RT 状态；SDK fault/stop failed 或依赖退出时立即报错
+  impedance-capture-home  只读保存当前静止 TCP 为固定原点；重新定义时显式传 --overwrite
   shell    进入干净的交互式 bash
 示例:
   $0 build --packages-select rokae_hardware
