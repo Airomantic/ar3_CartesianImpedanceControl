@@ -32,6 +32,19 @@ int main() {
   validate_target(zero, near, zero, 0.03, 0.15, 0.25);
   must_reject([&] { validate_target(zero, far, zero, 0.03, 0.15, 0.25); });
   must_reject([&] { validate_target(zero, rotated, zero, 0.03, 0.15, 0.25); });
+  // The 40 mm teleop lead must fit the 50 mm SDK tracking guard on every axis.
+  for(std::size_t axis = 0; axis < 3; ++axis) {
+    for(double sign : {-1.0, 1.0}) {
+      Six target{};
+      target[axis] = sign * 0.04;
+      validate_target(zero, target, zero, 0.05, 0.15, 0.25);
+      target[axis] = sign * 0.0501;
+      must_reject([&] { validate_target(zero, target, zero, 0.05, 0.15, 0.25); });
+    }
+  }
+  const Six diagonal{0.03, 0.03, 0, 0, 0, 0};
+  validate_target(zero, diagonal, zero, 0.05, 0.15, 0.25);
+  must_reject([&] { validate_target(zero, {0.04, 0.04, 0, 0, 0, 0}, zero, 0.05, 0.15, 0.25); });
   const Six wrap_a{0,0,0,0,0,3.14}, wrap_b{0,0,0,0,0,-3.14};
   validate_target(wrap_a, wrap_b, zero, 0.03, 0.15, 0.25);  // Euler wrap is a small physical rotation
   const Six quarter_turn{0,0,0,0,0,1.5707963267948966};

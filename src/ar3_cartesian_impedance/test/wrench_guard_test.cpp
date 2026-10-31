@@ -5,7 +5,10 @@
 using namespace ar3_cartesian_impedance;
 void require(bool condition, const char *message) { if(!condition) throw std::runtime_error(message); }
 int main() {
-  const Six limits{40,40,40,6,6,6};
+  const Six limits{40,40,40,6,6,10};
+  const Six reported_channel6{0.583,12.283,12.725,-3.655,-3.916,7.154};
+  require(!check_wrench_limits(reported_channel6,limits),
+    "reported 7.154 sample must fit the updated channel 6 limit");
   // Actual reported free-space takeover regression: must fail before startMove,
   // as well as at runtime, without interpreting or zeroing the raw channels.
   const Six reported{0.14,-14.58,0.85,6.04,-0.07,-5.0};
