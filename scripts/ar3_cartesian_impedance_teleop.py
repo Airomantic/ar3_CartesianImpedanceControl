@@ -36,19 +36,20 @@ class CartesianTeleop(Node):
             "clutch_timeout_s": 0., "max_linear_speed_m_s": 0.04,
             "service_timeout_s": 2.0,
             "max_angular_speed_rad_s": 0.15,
-            "max_translation_lead_m": 0.04, "max_rotation_lead_rad": 0.05,
+            "max_translation_lead_m": 0.06, "max_rotation_lead_rad": 0.05,
             # Command shaping is intentionally tighter than the existing SDK
             # tracking stop limits. Feedback can move between ROS samples;
             # touching a shaping boundary must not end a healthy RT hold.
-            "max_tracking_error_m": 0.05, "max_tracking_error_rad": 0.15,
+            "max_tracking_error_m": 0.08, "max_tracking_error_rad": 0.15,
             "direction_diagnostics_hz": 1.0,
             "desired_wrench": [0.] * 6,
             "return_home_file": str(Path(__file__).resolve().parents[1] / "config/cartesian_home.json"),
             "return_home_linear_speed_m_s": 0.02,
             "return_home_angular_speed_rad_s": 0.1,
-            "return_home_timeout_s": 60.,
+            "return_home_timeout_s": 75.,
+            "return_home_max_rotation_lead_rad": 0.1,
             "return_home_workspace_radius_m": 0.25,
-            "return_home_position_tolerance_m": 0.02,
+            "return_home_position_tolerance_m": 0.055,
             "return_home_rotation_tolerance_rad": 0.04,
         }
         for name, value in defaults.items():
@@ -59,7 +60,7 @@ class CartesianTeleop(Node):
                     "max_translation_lead_m", "max_rotation_lead_rad",
                     "max_tracking_error_m", "max_tracking_error_rad",
                     "return_home_linear_speed_m_s", "return_home_angular_speed_rad_s",
-                    "return_home_timeout_s", "return_home_workspace_radius_m",
+                    "return_home_timeout_s", "return_home_max_rotation_lead_rad", "return_home_workspace_radius_m",
                     "return_home_position_tolerance_m", "return_home_rotation_tolerance_rad"):
             if not np.isfinite(self.p(key)) or self.p(key) <= 0:
                 raise ValueError(f"{key} must be finite and positive")
@@ -154,13 +155,16 @@ class CartesianTeleop(Node):
                 f"Saved return-home TCP={self.home_values.tolist()} in {self.p('base_frame')}; "
                 f"measured arrival tolerance={self.p('return_home_position_tolerance_m')*1000.:.1f} mm/"
                 f"{self.p('return_home_rotation_tolerance_rad'):.3f} rad; "
+                f"timeout={self.p('return_home_timeout_s'):.0f} s; "
+                f"home rotation lead={self.p('return_home_max_rotation_lead_rad'):.3f} rad; "
                 "requested return requires released clutch; idle SDK may start a new RT hold")
         else:
             self.get_logger().info(f"Return-home origin unavailable; manual teleop remains available: {self.home_error}")
 
     def validate_tracking_limits(self):
         for lead, tracking in (("max_translation_lead_m", "max_tracking_error_m"),
-                               ("max_rotation_lead_rad", "max_tracking_error_rad")):
+                               ("max_rotation_lead_rad", "max_tracking_error_rad"),
+                               ("return_home_max_rotation_lead_rad", "max_tracking_error_rad")):
             if self.p(lead) > self.p(tracking):
                 raise ValueError(f"{lead} must not exceed {tracking}")
 
@@ -384,18 +388,19 @@ class CartesianTeleop(Node):
             blocked = []
             if lead_m > self.p("max_translation_lead_m") + 1e-9:
                 blocked.append("translation_lead")
-            if lead_rad > self.p("max_rotation_lead_rad") + 1e-9:
+            if lead_rad > self.p("return_home_max_rotation_lead_rad") + 1e-9:
                 blocked.append("rotation_lead")
             gate = "paused_" + "_and_".join(blocked) if blocked else "moving"
         self.home_progress = {
             "gate": gate,
             "wall_elapsed_s": round(time.monotonic()-self.home_started_at, 3),
+            "timeout_s": self.p("return_home_timeout_s"),
             "path_elapsed_s": round(path.elapsed, 3),
             "path_duration_s": round(path.duration, 3),
             "actual_to_home_mm_rad": [round(actual_m*1000., 3), round(actual_rad, 6)],
             "command_to_home_mm_rad": [round(command_m*1000., 3), round(command_rad, 6)],
             "tracking_mm_rad": [round(tracking_m*1000., 3), round(tracking_rad, 6)],
-            "lead_limits_mm_rad": [self.p("max_translation_lead_m")*1000., self.p("max_rotation_lead_rad")],
+            "lead_limits_mm_rad": [self.p("max_translation_lead_m")*1000., self.p("return_home_max_rotation_lead_rad")],
             "actual_tcp": np.concatenate((self.pose[0], matrix_rpy(self.pose[1]))).tolist(),
             "command_tcp": np.concatenate((self.last_command[0], matrix_rpy(self.last_command[1]))).tolist(),
             "measured_feedback_sdk6": None if self.state is None else self.state[6:12].tolist(),
@@ -561,7 +566,7 @@ class CartesianTeleop(Node):
             # A slow or obstructed robot pauses the trajectory clock. Never
             # advance along the recording clock or accumulate targets ahead.
             if (position_lead <= self.p("max_translation_lead_m") + 1e-9
-                    and rotation_lead <= self.p("max_rotation_lead_rad") + 1e-9):
+                    and rotation_lead <= self.p("return_home_max_rotation_lead_rad") + 1e-9):
                 self.validate_tracking_error(command)
                 self.last_command = command
                 self.home_path.elapsed = elapsed
@@ -602,10 +607,16 @@ class CartesianTeleop(Node):
         )
         text = " | ".join(f"{name} dXYZ(mm)=[{', '.join(f'{v:+.1f}' for v in delta*1000.)}]"
                           for name, delta in vectors)
+        mapped_error = np.linalg.norm(mapped[0]-self.pose[0])
+        command_error = np.linalg.norm(command[0]-self.pose[0])
+        lead = self.p("max_translation_lead_m")
+        limited = "true" if mapped_error > lead else "false"
         wrench = ', '.join(f'{v:+.2f}' for v in self.state[6:12])
         self.get_logger().info(
             f"direction: {text}; MAPPED/COMMAND/ACTUAL use SDK base axes; "
-            f"RT_EXTERNAL_BASE[SDK6]=[{wrench}]")
+            f"translation lead: mapped_actual={mapped_error*1000.:.3f} mm "
+            f"command_actual={command_error*1000.:.3f} mm max_lead={lead*1000.:.3f} mm "
+            f"lead_limited={limited}; RT_EXTERNAL_BASE[SDK6]=[{wrench}]")
 
     def tick(self):
         now = time.monotonic()

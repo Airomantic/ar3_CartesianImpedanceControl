@@ -1,5 +1,6 @@
 #pragma once
 #include "ar3_cartesian_impedance/frames.hpp"
+#include "ar3_cartesian_impedance/joint_torque.hpp"
 #include <atomic>
 #include <cstdint>
 #include <type_traits>
@@ -171,6 +172,7 @@ void finish_rt_session(bool explicit_stop, StopMotion stop_motion, SuspendMonito
 }
 struct RtSnapshot {
   Command measured{}, accepted{};
+  JointTorqueSample joint_torque{};
   std::int64_t measured_ns{}, accepted_ns{};
   std::uint64_t sequence{};
   double elbow{};

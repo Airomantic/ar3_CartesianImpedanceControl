@@ -69,7 +69,8 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     state_timeout_s_ = positive("rt_state_timeout_s", 0.01);
     startup_timeout_s_ = positive("startup_timeout_s", 5.0);
     stop_timeout_s_ = positive("stop_timeout_s", 3.0);
-    max_step_m_ = positive("max_translation_step_m", 0.05);
+    // Keep the 60 mm teleop lead below the 80 mm tracking stop distance.
+    max_step_m_ = positive("max_translation_step_m", 0.08);
     max_step_rad_ = positive("max_rotation_step_rad", 0.15);
     radius_ = positive("workspace_radius_m", 0.25);
     speed_m_s_ = positive("speed_mm_s", 40.0) / 1000.0;
@@ -84,7 +85,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     mass_ = six_parameter("mass_metadata", {});
     max_stiffness_ = six_parameter("max_stiffness", {1000, 1000, 1000, 100, 100, 100});
     max_wrench_ = six_parameter("max_wrench", {20, 20, 20, 3, 3, 3});
-    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 6, 16});
+    max_measured_wrench_ = six_parameter("max_measured_wrench", {40, 40, 40, 6, 10, 20});
     const auto velocity = six_parameter("max_velocity", {0.04, 0.04, 0.04, 0.15, 0.15, 0.15});
     angular_speed_ = std::min({velocity[3], velocity[4], velocity[5]});
     speed_m_s_ = std::min({speed_m_s_, velocity[0], velocity[1], velocity[2]});
@@ -99,6 +100,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
          max_wrench_[i] > (i < 3 ? 60 : 30)) throw std::invalid_argument("stiffness/wrench exceeds SDK limits");
     }
     state_pub_ = create_publisher<ArrayMsg>(topic("state"), 1);
+    tau_m_pub_ = create_publisher<ArrayMsg>(topic("tau_m"), 1);
     accepted_pub_ = create_publisher<ArrayMsg>(topic("accepted_command"), 1);
     pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(topic("tcp_pose"), 1);
     wrench_pub_ = create_publisher<geometry_msgs::msg::WrenchStamped>(topic("measured_wrench"), 1);
@@ -231,7 +233,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   }
   void publish_metadata() {
     std_msgs::msg::String message;
-    message.data = R"JSON({"schema":"pose6,wrench6,K6,D6,M6","motion_backend":"rt","control_mode":"cartesianImpedance","pose_stream_hz":1000,"session_fixed_K_wrench":true,"pose":"TCP xyz[m],rpy[rad];Rz*Ry*Rx","frame":"robot_base","pose_source":"RtSupportedFields.tcpPose_m","measured_wrench_source":"xCoreSDK.RtSupportedFields.tauExt_inBase (tau_ext_base)","controller_reported":true,"raw_sensor":false,"wrench_component_mapping":"assumed_Fxyz_Txyz_pending_vendor_or_physical_validation","wrench_origin":"not_documented_by_sdk_field","force_frame":"world; base wrench rotated; diagonal stiffness must remain representable","state_K":"configured_or_session_setpoint;not_controller_readback","D":"controller_default_not_applied;zero_unspecified","M":"not_supported;zero_unspecified","accepted_command":"smoothed_pose_returned_from_RT_callback;not_controller_ack_or_measured_completion","load_source":")JSON";
+    message.data = R"JSON({"schema":"pose6,wrench6,K6,D6,M6","motion_backend":"rt","control_mode":"cartesianImpedance","pose_stream_hz":1000,"session_fixed_K_wrench":true,"pose":"TCP xyz[m],rpy[rad];Rz*Ry*Rx","frame":"robot_base","pose_source":"RtSupportedFields.tcpPose_m","measured_joint_torque_source":"xCoreSDK.RtSupportedFields.tau_m","measured_joint_torque_topic":"/ar3/cartesian_impedance/tau_m","measured_joint_torque_units":"Nm","measured_joint_torque_order":[1,2,3,4,5,6,7],"measured_joint_torque_validity":"successful_exact_array7_and_finite;omit_invalid;no_zero_fallback","measured_joint_torque_sampling":"same_RT_snapshot_as_state;publish_rate_hz_decimation;host_receipt_clock","measured_wrench_source":"xCoreSDK.RtSupportedFields.tauExt_inBase (tau_ext_base)","controller_reported":true,"raw_sensor":false,"wrench_component_mapping":"assumed_Fxyz_Txyz_pending_vendor_or_physical_validation","wrench_origin":"not_documented_by_sdk_field","force_frame":"world; base wrench rotated; diagonal stiffness must remain representable","state_K":"configured_or_session_setpoint;not_controller_readback","D":"controller_default_not_applied;zero_unspecified","M":"not_supported;zero_unspecified","accepted_command":"smoothed_pose_returned_from_RT_callback;not_controller_ack_or_measured_completion","load_source":")JSON";
     message.data += override_enabled_ ? "startup_parameter_override" :
       (mass_override_enabled_ ? "startup_mass_override_controller_cog_inertia" : "controller_toolset");
     message.data += "\",\"load_readback\":false,\"workspace_recenter\":\"active_hold_once_v1\"}";
@@ -252,6 +254,14 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     if(!fresh || !connected_ready_.load() || latest_.sequence == published_sequence_) return;
     published_sequence_ = latest_.sequence;
     ArrayMsg state; state.data = encode(latest_.measured); state_pub_->publish(state);
+    if(latest_.joint_torque.valid) {
+      ArrayMsg torque;
+      torque.data.assign(latest_.joint_torque.values.begin(), latest_.joint_torque.values.end());
+      tau_m_pub_->publish(torque);
+    } else {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "RT tau_m unavailable/nonfinite: omitting joint-torque telemetry; recordings requiring tau_m must wait");
+    }
     // Reconstruct sample ROS time from its measured monotonic age; never stamp
     // a cached 1 ms packet as if newly measured by this ROS timer.
     const auto stamp = now() - rclcpp::Duration::from_seconds(age_s(latest_.measured_ns));
@@ -283,6 +293,9 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     for(double value : wrench) if(!std::isfinite(value)) throw std::runtime_error("nonfinite RT external wrench channel");
     if(!std::isfinite(elbow)) throw std::runtime_error("nonfinite RT elbow");
     sample_.measured = Command{matrix_pose(pose), wrench, session_config_.stiffness, {}, {}};
+    sample_.joint_torque = read_joint_torque([this](std::array<double, 7> &values) {
+      return robot_->getStateData(rokae::RtSupportedFields::tau_m, values);
+    });
     sample_.elbow = elbow; sample_.measured_ns = monotonic_ns(); ++sample_.sequence;
     return true;
   }
@@ -402,6 +415,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   void invalidate_monitor() {
     connected_ready_.store(false);
     sample_.measured_ns = 0; sample_.accepted_ns = 0; sample_.accepted_valid = false;
+    sample_.joint_torque.valid = false;
     ++sample_.sequence; snapshots_.publish(sample_);
   }
   void suspend_rt_monitor() {
@@ -420,7 +434,9 @@ class CartesianImpedanceNode final : public rclcpp::Node {
     if(!rt_) throw std::runtime_error("RT controller unavailable");
     rt_->setEndEffectorFrame(tool_matrix_, ec); check(ec, "setEndEffectorFrame(existing TCP)");
     receiving_ = true;  // start may partially succeed before throwing
-    robot_->startReceiveRobotState(1ms, {rokae::RtSupportedFields::tcpPose_m, rokae::RtSupportedFields::tauExt_inBase, rokae::RtSupportedFields::elbow_m});
+    robot_->startReceiveRobotState(1ms, {rokae::RtSupportedFields::tcpPose_m,
+      rokae::RtSupportedFields::tauExt_inBase, rokae::RtSupportedFields::elbow_m,
+      rokae::RtSupportedFields::tau_m});
     rt_->setCpuAffinity(cpu_);
     const auto deadline = Clock::now() + std::chrono::duration<double>(startup_timeout_s_);
     while(!sample_.measured_ns && Clock::now() < deadline && !shutdown_.load()) monitor_sample();
@@ -724,7 +740,7 @@ class CartesianImpedanceNode final : public rclcpp::Node {
   std::uint64_t rt_recenter_session_{};
   LoopExit loop_exit_{LoopExit::none};
   WrenchViolation wrench_violation_{};
-  rclcpp::Publisher<ArrayMsg>::SharedPtr state_pub_, accepted_pub_;
+  rclcpp::Publisher<ArrayMsg>::SharedPtr state_pub_, accepted_pub_, tau_m_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::WrenchStamped>::SharedPtr wrench_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr ready_pub_;
