@@ -93,18 +93,47 @@ void session_and_freshness_guards() {
   require(pending==34,"active callback backlog drain was not bounded to eight packets");
   require(drain_rt_packets([](bool) { return false; },8)==0,"empty state queue fabricated a fresh measurement");
 }
+void measured_joint_torque_does_not_fabricate_missing_channels() {
+  const std::array<double, 7> expected{-7.5, 2.0, 0.125, -0.25, 10.0, -12.0, 3.5};
+  auto sample = read_joint_torque([&](std::array<double, 7> &values) { values = expected; return 0; });
+  require(sample.valid && sample.values == expected, "measured SDK joint torques were reordered/scaled");
+  auto zero = read_joint_torque([](std::array<double, 7> &values) { values.fill(0); return 0; });
+  require(zero.valid, "real successfully read zero joint torques were rejected");
+  sample = read_joint_torque([](std::array<double, 7> &) { return -1; });
+  require(!sample.valid, "missing/wrong-type SDK tau_m fabricated valid values");
+  sample = read_joint_torque([](std::array<double, 7> &values) { values[0] = 0; return 0; });
+  require(!sample.valid, "partial SDK tau_m filled missing joints with zero or stale data");
+  for(double bad : {std::numeric_limits<double>::quiet_NaN(),
+                   std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()}) {
+    for(std::size_t axis = 0; axis < expected.size(); ++axis) {
+      sample = read_joint_torque([&](std::array<double, 7> &values) {
+        values = expected; values[axis] = bad; return 0;
+      });
+      require(!sample.valid, "nonfinite measured joint torque was accepted");
+    }
+  }
+  sample = read_joint_torque([](std::array<double, 7> &) -> int {
+    throw std::runtime_error("SDK torque field read failed");
+  });
+  require(!sample.valid, "optional torque telemetry failure changed the control path");
+}
 void latest_mailbox_stress_and_raw_channels() {
   LatestMailbox<RtSnapshot> mailbox;
   RtSnapshot sample{}; sample.measured.wrench={1,2,3,4,5,6}; sample.sequence=1;
+  sample.joint_torque = {{{-7,6,-5,4,-3,2,-1}}, true};
   mailbox.publish(sample); sample.sequence=2; mailbox.publish(sample);
   RtSnapshot got{}; require(mailbox.read(got) && got.sequence==2, "mailbox replayed an obsolete queued command");
   require(got.measured.wrench==sample.measured.wrench,"RT six external channels were reordered/scaled/shifted");
+  require(got.joint_torque.valid && got.joint_torque.values==sample.joint_torque.values,
+    "RT seven-joint torque telemetry was mixed with Cartesian wrench");
   require(!mailbox.read(got),"reading cached mailbox value fabricated a new packet");
   std::atomic<bool> done{false};
   std::thread producer([&] {
     for(std::uint64_t sequence=3;sequence<=100000;++sequence) {
       RtSnapshot value{}; value.sequence=sequence;
       for(std::size_t i=0;i<6;++i) value.measured.wrench[i]=static_cast<double>(sequence*10+i);
+      value.joint_torque.valid = sequence % 2 == 0;
+      for(std::size_t i=0;i<7;++i) value.joint_torque.values[i]=-static_cast<double>(sequence*10+i);
       mailbox.publish(value);
     }
     done.store(true);
@@ -113,6 +142,9 @@ void latest_mailbox_stress_and_raw_channels() {
   auto inspect=[&] {
     require(got.sequence>=last,"mailbox sequence moved backwards"); last=got.sequence;
     for(std::size_t i=0;i<6;++i) require(got.measured.wrench[i]==static_cast<double>(got.sequence*10+i),"mailbox returned a torn cross-thread snapshot");
+    require(got.joint_torque.valid == (got.sequence % 2 == 0), "torque validity came from another RT packet");
+    for(std::size_t i=0;i<7;++i)
+      require(got.joint_torque.values[i]==-static_cast<double>(got.sequence*10+i),"torque channels came from another RT snapshot");
   };
   while(!done.load()) if(mailbox.read(got)) inspect();
   producer.join(); if(mailbox.read(got)) inspect();
@@ -210,7 +242,8 @@ void stop_exits_rt_mode_before_confirming_idle() {
 }
 int main() {
   movement_in_six_axes_and_reversals(); close_target_brakes_without_velocity_reset(); base_world_force_contract();
-  session_and_freshness_guards(); latest_mailbox_stress_and_raw_channels(); stop_does_not_require_duplicate_stop_move();
+  session_and_freshness_guards(); measured_joint_torque_does_not_fabricate_missing_channels();
+  latest_mailbox_stress_and_raw_channels(); stop_does_not_require_duplicate_stop_move();
   stop_exits_rt_mode_before_confirming_idle();
   std::cout << "RT six-axis/reversal speed and acceleration, world force frame, session/watchdogs, startup backlog, mailbox and stop regressions passed\n";
 }

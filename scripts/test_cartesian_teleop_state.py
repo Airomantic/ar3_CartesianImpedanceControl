@@ -52,6 +52,7 @@ class CartesianTeleopStateTest(unittest.TestCase):
             "return_home_linear_speed_m_s": 0.02,
             "return_home_angular_speed_rad_s": 0.1,
             "return_home_timeout_s": 60.,
+            "return_home_max_rotation_lead_rad": 0.05,
             "return_home_workspace_radius_m": 0.25,
             "return_home_position_tolerance_m": 0.005,
             "return_home_rotation_tolerance_rad": 0.04,
@@ -144,6 +145,37 @@ class CartesianTeleopStateTest(unittest.TestCase):
         self.node.correction = rpy_matrix(np.deg2rad(self.parameters["target_direction_rpy_deg"]))
         self.node.validate_tracking_limits()
 
+    def use_deployed_home_profile(self):
+        self.use_deployed_translation_profile()
+        tree = ast.parse(Path(__file__).with_name("ar3_cartesian_impedance_teleop.py").read_text())
+        defaults = next(statement.value for statement in ast.walk(tree)
+                        if isinstance(statement, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "defaults"
+                                for target in statement.targets))
+        values = {ast.literal_eval(key): value for key, value in zip(defaults.keys, defaults.values)}
+        for name in ("return_home_max_rotation_lead_rad", "return_home_timeout_s",
+                     "return_home_angular_speed_rad_s", "return_home_linear_speed_m_s",
+                     "return_home_rotation_tolerance_rad", "max_rotation_lead_rad", "max_tracking_error_rad"):
+            self.parameters[name] = ast.literal_eval(values[name])
+        self.node.validate_tracking_limits()
+
+    def test_deployed_home_rotation_profile_keeps_manual_following_at_005_rad(self):
+        self.use_deployed_home_profile()
+        self.assertEqual(self.parameters["return_home_max_rotation_lead_rad"], 0.1)
+        self.assertEqual(self.parameters["return_home_timeout_s"], 75.)
+        self.assertEqual(self.parameters["max_rotation_lead_rad"], 0.05)
+        self.assertEqual(self.parameters["max_tracking_error_rad"], 0.15)
+        self.enable()
+        node = self.node
+        node.target = (node.target[0], rpy_matrix([0.4, 0., 0.]))
+        for _ in range(100):
+            self.advance_with_feedback(0.01)
+            node.tick()
+            self.assertTrue(node.active)
+            self.assertLessEqual(pose_error(node.last_command, node.pose)[1], 0.05 + 1e-9)
+        self.assertAlmostEqual(pose_error(node.last_command, node.pose)[1], 0.05)
+        node.stop_client.call_async.assert_not_called()
+
     def test_initial_pressed_clutch_cannot_enable(self):
         self.node.on_clutch(SimpleNamespace(data=True))
         self.node.tick()
@@ -153,7 +185,8 @@ class CartesianTeleopStateTest(unittest.TestCase):
     def test_command_lead_cannot_exceed_tracking_stop_limit(self):
         self.node.validate_tracking_limits()
         for lead, tracking in (("max_translation_lead_m", "max_tracking_error_m"),
-                               ("max_rotation_lead_rad", "max_tracking_error_rad")):
+                               ("max_rotation_lead_rad", "max_tracking_error_rad"),
+                               ("return_home_max_rotation_lead_rad", "max_tracking_error_rad")):
             with self.subTest(lead=lead):
                 original = self.parameters[lead]
                 self.parameters[lead] = self.parameters[tracking] + 0.001
@@ -707,7 +740,55 @@ class CartesianTeleopStateTest(unittest.TestCase):
             # A slower robot follows halfway toward each requested waypoint.
             node.pose = limit_pose(node.pose, previous, 0.0005, 0.003)
 
-    def test_deployed_profile_maps_all_six_source_directions_to_40mm_without_stop(self):
+    def test_translation_lead_diagnostic_reports_signed_boundaries_from_actual_tcp(self):
+        self.use_deployed_translation_profile()
+        self.enable()
+        self.parameters["direction_diagnostics_hz"] = 1.0
+        node = self.node
+        # Actual feedback deliberately differs from the takeover anchor.
+        node.pose = (np.zeros(3), np.eye(3))
+        command = (np.array([0.015, 0.020, 0.]), np.eye(3))
+        for axis in range(3):
+            for sign in (-1., 1.):
+                for distance, limited in ((0.0599, "false"), (0.06, "false"), (0.0601, "true")):
+                    with self.subTest(axis=axis, sign=sign, distance=distance):
+                        delta = np.zeros(3)
+                        delta[axis] = sign * distance
+                        mapped = (delta, np.eye(3))
+                        self.clock.now += 1.
+                        node.report_direction(self.clock.now, mapped, command)
+                        message = node.get_logger().info.call_args.args[0]
+                        self.assertIn(f"mapped_actual={distance*1000.:.3f} mm", message)
+                        self.assertIn("command_actual=25.000 mm max_lead=60.000 mm", message)
+                        self.assertIn(f"lead_limited={limited};", message)
+                        np.testing.assert_array_equal(mapped[0], delta)
+                        np.testing.assert_array_equal(command[0], [0.015, 0.020, 0.])
+
+    def test_translation_lead_diagnostic_uses_total_distance_and_preserves_one_hz_gate(self):
+        self.use_deployed_translation_profile()
+        self.enable()
+        self.parameters["direction_diagnostics_hz"] = 1.0
+        node = self.node
+        node.pose = (np.zeros(3), np.eye(3))
+        mapped = (np.array([0.05, 0.05, 0.]), np.eye(3))
+        command = (np.zeros(3), np.eye(3))
+        logger = node.get_logger()
+        logger.info.reset_mock()
+        now = self.clock.now
+        node.report_direction(now, mapped, command)
+        logger.info.assert_called_once()
+        message = logger.info.call_args.args[0]
+        self.assertIn("mapped_actual=70.711 mm command_actual=0.000 mm", message)
+        self.assertIn("max_lead=60.000 mm lead_limited=true;", message)
+        node.report_direction(now+0.999, mapped, command)
+        logger.info.assert_called_once()
+        node.report_direction(now+1., mapped, command)
+        self.assertEqual(logger.info.call_count, 2)
+        self.parameters["direction_diagnostics_hz"] = 0.0
+        node.report_direction(now+2., mapped, command)
+        self.assertEqual(logger.info.call_count, 2)
+
+    def test_deployed_profile_maps_all_six_source_directions_to_60mm_without_stop(self):
         # The right-arm mount maps source X/Y/Z to base X/-Z/Y respectively.
         expected_axes = np.array([[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
         for axis in range(3):
@@ -722,7 +803,7 @@ class CartesianTeleopStateTest(unittest.TestCase):
                     node.target = (node.target[0] + source_offset, node.target[1])
                     previous = node.last_command[0].copy()
                     dt = 1. / self.parameters["rate_hz"]
-                    for step in range(125):
+                    for step in range(200):
                         self.advance_with_feedback(dt)
                         node.tick()
                         self.assertTrue(node.active)
@@ -730,36 +811,36 @@ class CartesianTeleopStateTest(unittest.TestCase):
                         self.assertLessEqual(np.linalg.norm(p-previous), 0.04*dt + 1e-9)
                         if step == 0:
                             self.assertAlmostEqual(np.linalg.norm(p-previous)/dt, 0.04)
-                        self.assertLessEqual(np.linalg.norm(p-node.pose[0]), 0.04 + 1e-9)
+                        self.assertLessEqual(np.linalg.norm(p-node.pose[0]), 0.06 + 1e-9)
                         previous = p.copy()
                     np.testing.assert_allclose(node.last_command[0]-node.pose[0],
-                                               sign * expected_axes[axis] * 0.04, atol=1e-9)
+                                               sign * expected_axes[axis] * 0.06, atol=1e-9)
                     node.stop_client.call_async.assert_not_called()
 
-    def test_deployed_profile_diagonal_lead_is_40mm_total_not_per_axis(self):
+    def test_deployed_profile_diagonal_lead_is_60mm_total_not_per_axis(self):
         self.use_deployed_translation_profile()
         self.enable()
         node = self.node
         source_offset = np.array([0.2, -0.2, 0.2])
         node.target = (node.target[0] + source_offset, node.target[1])
-        for _ in range(125):
+        for _ in range(200):
             self.advance_with_feedback(1. / self.parameters["rate_hz"])
             node.tick()
             self.assertTrue(node.active)
-            self.assertLessEqual(np.linalg.norm(node.last_command[0]-node.pose[0]), 0.04 + 1e-9)
+            self.assertLessEqual(np.linalg.norm(node.last_command[0]-node.pose[0]), 0.06 + 1e-9)
         expected_direction = np.array([1., 1., 1.]) / np.sqrt(3.)
-        np.testing.assert_allclose(node.last_command[0]-node.pose[0], expected_direction*0.04, atol=1e-9)
+        np.testing.assert_allclose(node.last_command[0]-node.pose[0], expected_direction*0.06, atol=1e-9)
         node.stop_client.call_async.assert_not_called()
 
-    def test_deployed_profile_hold_and_resume_allow_45mm_error_without_target_jump(self):
+    def test_deployed_profile_hold_and_resume_allow_70mm_error_without_target_jump(self):
         self.use_deployed_translation_profile()
         self.enable()
         node = self.node
         held = np.asarray(node.command_pub.publish.call_args.args[0].data).copy()
         node.on_clutch(SimpleNamespace(data=False))
-        # External motion puts the measured TCP beyond the 40 mm shaping cap,
-        # but within the 50 mm stop limit; a hold must remain fixed.
-        node.pose = (node.pose[0] + np.array([0.045, 0., 0.]), node.pose[1])
+        # External motion puts the measured TCP beyond the 60 mm shaping cap,
+        # but within the 80 mm stop limit; a hold must remain fixed.
+        node.pose = (node.pose[0] + np.array([0.07, 0., 0.]), node.pose[1])
         for _ in range(3):
             self.advance_with_feedback(0.01)
             node.tick()
@@ -782,7 +863,7 @@ class CartesianTeleopStateTest(unittest.TestCase):
         self.assertEqual(node.enable_client.call_async.call_count, 1)
         node.stop_client.call_async.assert_not_called()
 
-    def test_deployed_profile_still_stops_above_50mm_in_all_directions(self):
+    def test_deployed_profile_still_stops_above_80mm_in_all_directions(self):
         for holding in (False, True):
             for axis in range(3):
                 for sign in (-1., 1.):
@@ -794,7 +875,7 @@ class CartesianTeleopStateTest(unittest.TestCase):
                         if holding:
                             node.on_clutch(SimpleNamespace(data=False))
                         displacement = np.zeros(3)
-                        displacement[axis] = sign * 0.0501
+                        displacement[axis] = sign * 0.0801
                         node.pose = (node.pose[0] + displacement, node.pose[1])
                         count = node.command_pub.publish.call_count
                         self.advance_with_feedback(0.01)
@@ -803,7 +884,7 @@ class CartesianTeleopStateTest(unittest.TestCase):
                         self.assertFalse(node.holding)
                         self.assertEqual(node.command_pub.publish.call_count, count)
                         self.assertEqual(node.pending[0], "stop")
-                        self.assertIn("limit=50.000 mm", node.get_logger().warning.call_args.args[0])
+                        self.assertIn("limit=80.000 mm", node.get_logger().warning.call_args.args[0])
 
 
 if __name__ == "__main__":

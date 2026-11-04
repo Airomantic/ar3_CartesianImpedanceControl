@@ -32,24 +32,35 @@ int main() {
   validate_target(zero, near, zero, 0.03, 0.15, 0.25);
   must_reject([&] { validate_target(zero, far, zero, 0.03, 0.15, 0.25); });
   must_reject([&] { validate_target(zero, rotated, zero, 0.03, 0.15, 0.25); });
-  // The 40 mm teleop lead must fit the 50 mm SDK tracking guard on every axis.
+  // The 60 mm teleop lead fits the 80 mm tracking guard in either direction.
   for(std::size_t axis = 0; axis < 3; ++axis) {
     for(double sign : {-1.0, 1.0}) {
       Six target{};
-      target[axis] = sign * 0.04;
-      validate_target(zero, target, zero, 0.05, 0.15, 0.25);
-      target[axis] = sign * 0.0501;
-      must_reject([&] { validate_target(zero, target, zero, 0.05, 0.15, 0.25); });
+      target[axis] = sign * 0.06;
+      validate_target(zero, target, zero, 0.08, 0.15, 0.25);
+      target[axis] = sign * 0.08;
+      validate_target(zero, target, zero, 0.08, 0.15, 0.25);
+      target[axis] = sign * 0.080001;
+      must_reject([&] { validate_target(zero, target, zero, 0.08, 0.15, 0.25); });
+
+      // Workspace remains 250 mm even with zero target-to-measured error.
+      target[axis] = sign * 0.25;
+      validate_target(target, target, zero, 0.08, 0.15, 0.25);
+      target[axis] = sign * 0.250001;
+      must_reject([&] { validate_target(target, target, zero, 0.08, 0.15, 0.25); });
     }
   }
-  const Six diagonal{0.03, 0.03, 0, 0, 0, 0};
-  validate_target(zero, diagonal, zero, 0.05, 0.15, 0.25);
-  must_reject([&] { validate_target(zero, {0.04, 0.04, 0, 0, 0, 0}, zero, 0.05, 0.15, 0.25); });
+  // These are Euclidean distance bounds, not independent per-axis allowances.
+  const Six diagonal{0.04, 0.04, 0.04, 0, 0, 0};
+  validate_target(zero, diagonal, zero, 0.08, 0.15, 0.25);
+  must_reject([&] { validate_target(zero, {0.06, 0.06, 0, 0, 0, 0}, zero, 0.08, 0.15, 0.25); });
+  const Six outside_workspace{0.18, 0.18, 0, 0, 0, 0};
+  must_reject([&] { validate_target(outside_workspace, outside_workspace, zero, 0.08, 0.15, 0.25); });
   const Six wrap_a{0,0,0,0,0,3.14}, wrap_b{0,0,0,0,0,-3.14};
   validate_target(wrap_a, wrap_b, zero, 0.03, 0.15, 0.25);  // Euler wrap is a small physical rotation
   const Six quarter_turn{0,0,0,0,0,1.5707963267948966};
   const auto rotated_wrench = wrench_in_base({1,0,0,0,2,0}, quarter_turn);
   require(std::abs(rotated_wrench[1]-1) < 1e-10 && std::abs(rotated_wrench[3]+2) < 1e-10,
     "TCP force and torque must both rotate into base without a moment-arm shift");
-  std::cout << "Command bounds, fixed D/M, angular wrap and wrench frames passed\n";
+  std::cout << "60/80 mm tracking, unchanged 250 mm workspace, fixed D/M, angular wrap and wrench frames passed\n";
 }
